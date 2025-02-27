@@ -2,12 +2,12 @@
 #
 # ssh-keyman.sh - SSH Key Management Script
 #
-# This script manages SSH keys for cloud server deployments following a structured 
+# This script manages SSH keys for cloud server deployments following a structured
 # naming convention and directory organization. It supports creating, deleting,
-# and managing SSH keys and configurations.
+# and managing SSH keys and configurations, as well as handling known_hosts entries.
 #
 # Author: Your Name
-# Version: 1.0.0
+# Version: 1.1.0
 # Created: February 2025
 #
 # Usage:
@@ -18,6 +18,7 @@
 #   delete      Delete an existing SSH key
 #   list        List all managed SSH keys
 #   edit        Edit SSH config for a key
+#   clean       Clean known_hosts entries for a host
 #   help        Show this help message
 #
 # Options:
@@ -27,6 +28,7 @@
 #   --user USER           Specify username on remote server
 #   --ip IP               Specify IP address of remote server
 #   --key-type TYPE       Specify key type (ed25519/rsa/ecdsa)
+#   --hostname HOSTNAME   Specify hostname for known_hosts operations
 #
 # Examples:
 #   ./ssh-keyman.sh create
@@ -34,11 +36,13 @@
 #   ./ssh-keyman.sh delete
 #   ./ssh-keyman.sh list
 #   ./ssh-keyman.sh edit
+#   ./ssh-keyman.sh clean --ip 192.168.1.100
+#   ./ssh-keyman.sh clean --hostname example.com
 
 set -e
 
 # Script version
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Default values
 COMMAND=""
@@ -47,6 +51,7 @@ PROVIDER=""
 APP=""
 USER=""
 IP=""
+HOSTNAME=""
 KEY_TYPE="ed25519"
 INTERACTIVE=true
 
@@ -77,6 +82,7 @@ show_help() {
   echo "  delete      Delete an existing SSH key"
   echo "  list        List all managed SSH keys"
   echo "  edit        Edit SSH config for a key"
+  echo "  clean       Clean known_hosts entries for a host"
   echo "  help        Show this help message"
   echo
   echo -e "${YELLOW}${BOLD}Options:${NC}"
@@ -85,6 +91,7 @@ show_help() {
   echo "  --app APP             Specify application name"
   echo "  --user USER           Specify username on remote server"
   echo "  --ip IP               Specify IP address of remote server"
+  echo "  --hostname HOSTNAME   Specify hostname for known_hosts operations"
   echo "  --key-type TYPE       Specify key type (ed25519/rsa/ecdsa)"
   echo
   echo -e "${YELLOW}${BOLD}Examples:${NC}"
@@ -92,6 +99,8 @@ show_help() {
   echo "  ./ssh-keyman.sh create --env dev --provider do --app librechat --user sudu"
   echo "  ./ssh-keyman.sh delete"
   echo "  ./ssh-keyman.sh list"
+  echo "  ./ssh-keyman.sh clean --ip 192.168.1.100"
+  echo "  ./ssh-keyman.sh clean --hostname example.com"
   echo
 }
 
@@ -339,6 +348,145 @@ show_next_steps() {
   echo -e "2. Create an alias in your shell profile (~/.bashrc, ~/.zshrc, etc.):"
   echo -e "   ${CYAN}alias goto-$APP-$ENV=\"ssh $host_name\"${NC}"
   echo
+}
+
+# Function to manage known_hosts entries
+# This function handles cleaning and managing SSH known_hosts entries
+# to prevent "man-in-the-middle attack" warnings when servers are recreated
+manage_known_hosts() {
+  log_message "INFO" "Managing SSH known_hosts entries..."
+  
+  local known_hosts_file="$HOME/.ssh/known_hosts"
+  local backup_file="$HOME/.ssh/known_hosts.backup.$(date +%Y%m%d%H%M%S)"
+  local cleaned=false
+  local target_type=""
+  local target_value=""
+  
+  # Check if known_hosts file exists
+  if [ ! -f "$known_hosts_file" ]; then
+    log_message "INFO" "No known_hosts file found at $known_hosts_file"
+    return 0
+  fi
+  
+  # Create backup of known_hosts file
+  cp "$known_hosts_file" "$backup_file"
+  log_message "INFO" "Created backup of known_hosts file at $backup_file"
+  
+  # Determine if we're working with IP or hostname
+  if [ -n "$IP" ]; then
+    target_type="IP"
+    target_value="$IP"
+  elif [ -n "$HOSTNAME" ]; then
+    target_type="hostname"
+    target_value="$HOSTNAME"
+  else
+    # Interactive mode - ask for IP or hostname
+    echo -e "${YELLOW}Select target type:${NC}"
+    select target_option in "IP Address" "Hostname"; do
+      case $target_option in
+        "IP Address")
+          target_type="IP"
+          read -p "Enter IP address to clean from known_hosts: " target_value
+          break
+          ;;
+        "Hostname")
+          target_type="hostname"
+          read -p "Enter hostname to clean from known_hosts: " target_value
+          break
+          ;;
+        *)
+          log_message "ERROR" "Invalid selection. Please try again."
+          ;;
+      esac
+    done
+  fi
+  
+  # Validate target value
+  if [ -z "$target_value" ]; then
+    log_message "ERROR" "No $target_type specified. Cannot proceed."
+    return 1
+  fi
+  
+  log_message "INFO" "Cleaning $target_type: $target_value from known_hosts file..."
+  
+  # Check if the entry exists before attempting to remove it
+  if grep -q "$target_value" "$known_hosts_file"; then
+    # Use ssh-keygen to remove the entry
+    if ssh-keygen -R "$target_value" > /dev/null 2>&1; then
+      log_message "SUCCESS" "Removed $target_type: $target_value from known_hosts file."
+      cleaned=true
+    else
+      log_message "ERROR" "Failed to remove $target_type: $target_value from known_hosts file."
+      log_message "INFO" "Restoring backup from $backup_file"
+      cp "$backup_file" "$known_hosts_file"
+      return 1
+    fi
+  else
+    log_message "INFO" "No entries found for $target_type: $target_value in known_hosts file."
+  fi
+  
+  # Check if we're cleaning for a host in our SSH config
+  if [ "$target_type" = "IP" ]; then
+    # Look for hosts in SSH config that use this IP
+    if [ -f "$HOME/.ssh/config" ]; then
+      local matching_hosts=$(grep -B1 "HostName $target_value" "$HOME/.ssh/config" | grep "^Host " | awk '{print $2}')
+      
+      if [ -n "$matching_hosts" ]; then
+        echo -e "${YELLOW}Found hosts in SSH config using this IP:${NC}"
+        echo "$matching_hosts"
+        
+        read -p "Do you want to clean known_hosts entries for these hostnames too? [y/N] " clean_hostnames
+        if [[ "$clean_hostnames" =~ ^[Yy]$ ]]; then
+          for host in $matching_hosts; do
+            if ssh-keygen -R "$host" > /dev/null 2>&1; then
+              log_message "SUCCESS" "Removed hostname: $host from known_hosts file."
+              cleaned=true
+            else
+              log_message "WARNING" "Failed to remove hostname: $host from known_hosts file."
+            fi
+          done
+        fi
+      fi
+    fi
+  fi
+  
+  # If we're cleaning a hostname that's in our SSH config, also clean its IP
+  if [ "$target_type" = "hostname" ] && [ -f "$HOME/.ssh/config" ]; then
+    local host_ip=$(grep -A2 "^Host $target_value$" "$HOME/.ssh/config" | grep "HostName" | awk '{print $2}')
+    
+    if [ -n "$host_ip" ] && [[ "$host_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo -e "${YELLOW}Found IP address $host_ip for hostname $target_value in SSH config.${NC}"
+      
+      read -p "Do you want to clean known_hosts entry for this IP too? [y/N] " clean_ip
+      if [[ "$clean_ip" =~ ^[Yy]$ ]]; then
+        if ssh-keygen -R "$host_ip" > /dev/null 2>&1; then
+          log_message "SUCCESS" "Removed IP: $host_ip from known_hosts file."
+          cleaned=true
+        else
+          log_message "WARNING" "Failed to remove IP: $host_ip from known_hosts file."
+        fi
+      fi
+    fi
+  fi
+  
+  # If nothing was cleaned, we can remove the backup
+  if [ "$cleaned" = false ]; then
+    log_message "INFO" "No changes were made to known_hosts file."
+    rm -f "$backup_file"
+    log_message "INFO" "Removed unnecessary backup file."
+  else
+    log_message "SUCCESS" "Successfully cleaned known_hosts entries."
+    echo -e "${GREEN}A backup of your original known_hosts file was created at:${NC}"
+    echo -e "${CYAN}$backup_file${NC}"
+  fi
+  
+  # Provide information about what happens next
+  echo -e "\n${BLUE}${BOLD}What happens next:${NC}"
+  echo -e "1. The next time you connect to this server, SSH will ask you to verify and accept the new host key."
+  echo -e "2. This is normal when a server has been recreated or reinstalled."
+  echo -e "3. Verify the fingerprint carefully before accepting to ensure security."
+  
+  return 0
 }
 
 # Function to show provider-specific key setup instructions
@@ -748,13 +896,16 @@ main() {
     "edit")
       edit_ssh_config
       ;;
+    "clean")
+      manage_known_hosts
+      ;;
     "help")
       show_help
       ;;
     "")
       # No command specified, show interactive menu
       echo -e "${YELLOW}Select operation:${NC}"
-      select op in "Create new SSH key" "Delete SSH key" "List SSH keys" "Edit SSH config" "Exit"; do
+      select op in "Create new SSH key" "Delete SSH key" "List SSH keys" "Edit SSH config" "Clean known_hosts entries" "Exit"; do
         case $op in
           "Create new SSH key")
             create_new_key
@@ -770,6 +921,10 @@ main() {
             ;;
           "Edit SSH config")
             edit_ssh_config
+            break
+            ;;
+          "Clean known_hosts entries")
+            manage_known_hosts
             break
             ;;
           "Exit")
@@ -796,7 +951,7 @@ main() {
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    create|delete|list|edit|help)
+    create|delete|list|edit|clean|help)
       COMMAND="$1"
       shift
       ;;
@@ -818,6 +973,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ip)
       IP="$2"
+      shift 2
+      ;;
+    --hostname)
+      HOSTNAME="$2"
       shift 2
       ;;
     --key-type)
