@@ -20,8 +20,17 @@ Save the script in your SSH directory:
 
 ```bash
 mkdir -p ~/.ssh
-curl -o ~/.ssh/ssh-keyman.sh https://your-script-url.com/ssh-keyman.sh
-chmod +x ~/.ssh/ssh-keyman.sh
+# Download the script
+curl -o ssh-keyman.sh https://raw.githubusercontent.com/sudharsan-007/keyman/main/ssh-keyman.sh
+# Download the README
+curl -o README.md https://raw.githubusercontent.com/sudharsan-007/keyman/main/README.md
+# Make the script executable
+chmod +x ssh-keyman.sh
+```
+
+One-liner for convenience: 
+```bash
+curl -o ssh-keyman.sh https://raw.githubusercontent.com/sudharsan-007/keyman/main/ssh-keyman.sh && curl -o README.md https://raw.githubusercontent.com/sudharsan-007/keyman/main/README.md && chmod +x ssh-keyman.sh
 ```
 
 Or create it manually:
