@@ -327,15 +327,7 @@ show_next_steps() {
   local host_name="$PROVIDER-$APP-$USER-$ENV"
   
   echo -e "${BLUE}${BOLD}Next steps:${NC}"
-  echo -e "1. Copy the public key to your server:"
-  echo -e "   ${CYAN}cat $key_path.pub${NC}"
-  echo
-  echo -e "2. Add it to the authorized_keys file on your server:"
-  echo -e "   ${CYAN}ssh-copy-id -i $key_path $USER@YOUR_SERVER_IP${NC}"
-  echo -e "   or"
-  echo -e "   ${CYAN}echo \"$(cat $key_path.pub)\" >> ~/.ssh/authorized_keys${NC}"
-  echo
-  echo -e "3. Test the connection:"
+  echo -e "1. Test the connection:"
   if [ -n "$IP" ]; then
     echo -e "   ${CYAN}ssh $host_name${NC}"
   else
@@ -344,9 +336,36 @@ show_next_steps() {
     echo -e "   ${CYAN}ssh $host_name${NC}"
   fi
   echo
-  echo -e "4. Create an alias in your shell profile (~/.bashrc, ~/.zshrc, etc.):"
+  echo -e "2. Create an alias in your shell profile (~/.bashrc, ~/.zshrc, etc.):"
   echo -e "   ${CYAN}alias goto-$APP-$ENV=\"ssh $host_name\"${NC}"
   echo
+}
+
+# Function to show provider-specific key setup instructions
+show_key_instructions() {
+  echo -e "\n${YELLOW}${BOLD}IMPORTANT: Copy the above public key to your cloud provider${NC}"
+  echo -e "${BLUE}Based on your selection (${PROVIDER}), here's what to do:${NC}"
+
+  # Provider-specific instructions
+  case "$PROVIDER" in
+    "do")
+      echo -e "1. Go to Digital Ocean dashboard > Settings > Security > SSH Keys > Add SSH Key"
+      echo -e "2. Paste the key and give it a name like: $APP-$USER-$ENV"
+      echo -e "3. When creating your droplet, select this key in the Authentication section"
+      ;;
+    "li")
+      echo -e "1. Go to Linode dashboard > Account > SSH Keys > Add a Key"
+      echo -e "2. Paste the key and give it a label like: $APP-$USER-$ENV"
+      echo -e "3. When creating your Linode, select this key under 'Add SSH Keys'"
+      ;;
+    "gcp")
+      echo -e "1. Go to GCP Console > Compute Engine > Settings > Metadata > SSH Keys"
+      echo -e "2. Click Add Item and paste your key"
+      ;;
+    *)
+      echo -e "Please add this public key to your cloud provider's SSH key section"
+      ;;
+  esac
 }
 
 # Function to list all managed SSH keys
@@ -360,7 +379,7 @@ list_ssh_keys() {
     for key in "$HOME/.ssh/keys/dev"/*; do
       if [ -f "$key" ] && [[ ! "$key" == *.pub ]]; then
         local basename=$(basename "$key")
-        local host_entry=$(grep -l "IdentityFile.*$key" "$HOME/.ssh/config" | xargs grep "^Host" | awk '{print $2}')
+        local host_entry=$(grep -l "IdentityFile.*$key" "$HOME/.ssh/config" | xargs grep "^Host" 2>/dev/null | awk '{print $2}')
         
         echo -e "${BOLD}$basename${NC}"
         echo -e "  Private Key: $key"
@@ -585,7 +604,7 @@ edit_ssh_config() {
   return 0
 }
 
-# Function to create new SSH key
+# Function to create new SSH key with modified workflow and multi-user support
 create_new_key() {
   # Get environment
   if [ -z "$ENV" ]; then
@@ -636,36 +655,7 @@ create_new_key() {
     read -p "Enter username on remote server: " USER
   fi
   
-  # Get IP address (optional)
-  if [ -z "$IP" ]; then
-    read -p "Enter server IP address (optional, can be added later): " IP
-  fi
-  
-  # Get key type
-  if [ -z "$KEY_TYPE" ] || [ "$KEY_TYPE" = "ed25519" ]; then
-    echo -e "${YELLOW}Select key type:${NC}"
-    select key_option in "ED25519 (recommended)" "RSA" "ECDSA"; do
-      case $key_option in
-        "ED25519 (recommended)")
-          KEY_TYPE="ed25519"
-          break
-          ;;
-        "RSA")
-          KEY_TYPE="rsa"
-          break
-          ;;
-        "ECDSA")
-          KEY_TYPE="ecdsa"
-          break
-          ;;
-        *)
-          log_message "ERROR" "Invalid selection. Please try again."
-          ;;
-      esac
-    done
-  fi
-  
-  # Validate inputs
+  # Validate required inputs
   validate_environment || return 1
   validate_provider || return 1
   validate_app || return 1
@@ -675,14 +665,57 @@ create_new_key() {
   # Generate SSH key
   generate_ssh_key
   
-  # Update SSH config
+  # Show provider-specific instructions
+  show_key_instructions
+  
+  # Wait for user to confirm they've added the key
+  read -p "Have you added the key to your cloud provider? [y/N] " key_added
+  if [[ ! "$key_added" =~ ^[Yy]$ ]]; then
+    echo -e "${YELLOW}You can complete this process later using the 'edit' command.${NC}"
+    # Save the key information for later
+    echo "$PROVIDER-$APP-$USER-$ENV" > "$HOME/.ssh/.last_key_created"
+    return 0
+  fi
+  
+  # Now prompt for the IP address
+  read -p "Enter the server IP address provided by your cloud provider: " IP
+  
+  # Update SSH config with this IP
   update_ssh_config
   
-  # Manage SSH agent
+  # Add key to SSH agent
   manage_ssh_agent
   
   # Show next steps
   show_next_steps
+  
+  # Support for multiple users
+  read -p "Do you want to create keys for additional users on this same server? [y/N] " add_more_users
+  if [[ "$add_more_users" =~ ^[Yy]$ ]]; then
+    local original_user="$USER"
+    local continue_adding="yes"
+    
+    while [[ "$continue_adding" =~ ^[Yy] ]]; do
+      read -p "Enter additional username: " USER
+      if [[ -n "$USER" ]]; then
+        # Generate key for additional user with same server details
+        generate_ssh_key
+        show_key_instructions
+        
+        read -p "Have you added this user's key to your cloud provider? [y/N] " user_key_added
+        if [[ "$user_key_added" =~ ^[Yy]$ ]]; then
+          update_ssh_config
+          manage_ssh_agent
+        else
+          log_message "WARNING" "Skipping config for this user. You can edit it later."
+        fi
+      fi
+      read -p "Add another user? [y/N] " continue_adding
+    done
+    
+    # Restore original user
+    USER="$original_user"
+  fi
   
   return 0
 }
