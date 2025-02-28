@@ -386,47 +386,12 @@ manage_known_hosts() {
       case $target_option in
         "IP Address")
           target_type="IP"
-          
-          # Extract all IPs from known_hosts file
-          local ips=($(grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' "$known_hosts_file" | sort -u))
-          
-          if [ ${#ips[@]} -eq 0 ]; then
-            log_message "INFO" "No IP addresses found in known_hosts file."
-            read -p "Enter IP address to clean from known_hosts: " target_value
-          else
-            echo -e "${YELLOW}Select IP address to clean:${NC}"
-            select ip in "${ips[@]}" "Enter manually"; do
-              if [ "$ip" = "Enter manually" ]; then
-                read -p "Enter IP address to clean from known_hosts: " target_value
-              else
-                target_value="$ip"
-              fi
-              break
-            done
-          fi
+          read -p "Enter IP address to clean from known_hosts: " target_value
           break
           ;;
         "Hostname")
           target_type="hostname"
-          
-          # Extract all hostnames from known_hosts file
-          # This extracts entries before the first comma or space
-          local hostnames=($(cut -d ' ' -f1 "$known_hosts_file" | cut -d ',' -f1 | grep -v '^[0-9]' | sort -u))
-          
-          if [ ${#hostnames[@]} -eq 0 ]; then
-            log_message "INFO" "No hostnames found in known_hosts file."
-            read -p "Enter hostname to clean from known_hosts: " target_value
-          else
-            echo -e "${YELLOW}Select hostname to clean:${NC}"
-            select hostname in "${hostnames[@]}" "Enter manually"; do
-              if [ "$hostname" = "Enter manually" ]; then
-                read -p "Enter hostname to clean from known_hosts: " target_value
-              else
-                target_value="$hostname"
-              fi
-              break
-            done
-          fi
+          read -p "Enter hostname to clean from known_hosts: " target_value
           break
           ;;
         *)
