@@ -1,22 +1,24 @@
 #!/bin/bash
 #
-# ssh-keyman.sh - SSH Key Management Script
+# ssh-keyvault.sh - KeyVault SSH Management Script
 #
 # This script manages SSH keys for cloud server deployments following a structured
 # naming convention and directory organization. It supports creating, deleting,
 # and managing SSH keys and configurations, as well as handling known_hosts entries.
 #
+# Previously known as ssh-keyman
+#
 # Author: Your Name
-# Version: 1.1.0
+# Version: 1.2.0
 # Created: February 2025
 #
 # Usage:
-#   ./ssh-keyman.sh [COMMAND] [OPTIONS]
+#   ./ssh-keyvault.sh [COMMAND] [OPTIONS]
 #
 # Commands:
 #   create      Create a new SSH key
 #   delete      Delete an existing SSH key
-#   list        List all managed SSH keys
+#   view        View all managed SSH keys
 #   edit        Edit SSH config for a key
 #   clean       Clean known_hosts entries for a host
 #   help        Show this help message
@@ -34,15 +36,15 @@
 #   --verbose, -v         Show verbose information
 #
 # Examples:
-#   ./ssh-keyman.sh create
-#   ./ssh-keyman.sh create --env dev --provider do --app librechat --user sudu
-#   ./ssh-keyman.sh delete
-#   ./ssh-keyman.sh list
-#   ./ssh-keyman.sh list --table
-#   ./ssh-keyman.sh list --list --verbose
-#   ./ssh-keyman.sh edit
-#   ./ssh-keyman.sh clean --ip 192.168.1.100
-#   ./ssh-keyman.sh clean --hostname example.com
+#   ./ssh-keyvault.sh create
+#   ./ssh-keyvault.sh create --env dev --provider do --app librechat --user sudu
+#   ./ssh-keyvault.sh delete
+#   ./ssh-keyvault.sh view
+#   ./ssh-keyvault.sh view --table
+#   ./ssh-keyvault.sh view --list --verbose
+#   ./ssh-keyvault.sh edit
+#   ./ssh-keyvault.sh clean --ip 192.168.1.100
+#   ./ssh-keyvault.sh clean --hostname example.com
 
 set -e
 
@@ -76,18 +78,18 @@ PROVIDERS=("do:Digital Ocean" "li:Linode" "gcp:Google Cloud Platform" "other:Oth
 
 # Function to display help
 show_help() {
-  echo -e "${BLUE}${BOLD}SSH Key Management Script v${VERSION}${NC}"
+  echo -e "${BLUE}${BOLD}KeyVault SSH Management Script v${VERSION}${NC}"
   echo
   echo "This script manages SSH keys for cloud server deployments following a structured"
   echo "naming convention and directory organization."
   echo
   echo -e "${YELLOW}${BOLD}Usage:${NC}"
-  echo "  ./ssh-keyman.sh [COMMAND] [OPTIONS]"
+  echo "  ./ssh-keyvault.sh [COMMAND] [OPTIONS]"
   echo
   echo -e "${YELLOW}${BOLD}Commands:${NC}"
   echo "  create      Create a new SSH key"
   echo "  delete      Delete an existing SSH key"
-  echo "  list        List all managed SSH keys"
+  echo "  view        View all managed SSH keys"
   echo "  edit        Edit SSH config for a key"
   echo "  clean       Clean known_hosts entries for a host"
   echo "  help        Show this help message"
@@ -105,12 +107,12 @@ show_help() {
   echo "  --verbose, -v         Show verbose information"
   echo
   echo -e "${YELLOW}${BOLD}Examples:${NC}"
-  echo "  ./ssh-keyman.sh create"
-  echo "  ./ssh-keyman.sh create --env dev --provider do --app librechat --user sudu"
-  echo "  ./ssh-keyman.sh delete"
-  echo "  ./ssh-keyman.sh list"
-  echo "  ./ssh-keyman.sh clean --ip 192.168.1.100"
-  echo "  ./ssh-keyman.sh clean --hostname example.com"
+  echo "  ./ssh-keyvault.sh create"
+  echo "  ./ssh-keyvault.sh create --env dev --provider do --app librechat --user sudu"
+  echo "  ./ssh-keyvault.sh delete"
+  echo "  ./ssh-keyvault.sh view"
+  echo "  ./ssh-keyvault.sh clean --ip 192.168.1.100"
+  echo "  ./ssh-keyvault.sh clean --hostname example.com"
   echo
 }
 
@@ -1018,7 +1020,7 @@ create_new_key() {
 main() {
   # Display banner
   echo -e "${BLUE}${BOLD}===========================================================${NC}"
-  echo -e "${BLUE}${BOLD}           SSH Key Management Script v${VERSION}            ${NC}"
+  echo -e "${BLUE}${BOLD}           KeyVault SSH Management Script v${VERSION}            ${NC}"
   echo -e "${BLUE}${BOLD}===========================================================${NC}"
   echo
   
@@ -1036,7 +1038,7 @@ main() {
     "delete")
       delete_ssh_key
       ;;
-    "list")
+    "view"|"list")  # Support both "view" and "list" for backward compatibility
       list_ssh_keys
       ;;
     "edit")
@@ -1051,7 +1053,7 @@ main() {
     "")
       # No command specified, show interactive menu
       echo -e "${YELLOW}Select operation:${NC}"
-      select op in "Create new SSH key" "Delete SSH key" "List SSH keys" "Edit SSH config" "Clean known_hosts entries" "Exit"; do
+      select op in "Create new SSH key" "Delete SSH key" "View SSH keys" "Edit SSH config" "Clean known_hosts entries" "Exit"; do
         case $op in
           "Create new SSH key")
             create_new_key
@@ -1061,7 +1063,7 @@ main() {
             delete_ssh_key
             break
             ;;
-          "List SSH keys")
+          "View SSH keys")
             list_ssh_keys
             break
             ;;
@@ -1097,7 +1099,7 @@ main() {
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    create|delete|list|edit|clean|help)
+    create|delete|view|list|edit|clean|help)
       COMMAND="$1"
       shift
       ;;

@@ -1,20 +1,27 @@
-# SSH Key Management Guide
+# KeyVault SSH
 
-This guide explains how to set up and use the SSH Key Management Script (`ssh-keyman.sh`), which simplifies the creation, organization, and management of SSH keys for cloud server access.
+A robust SSH key management system for cloud infrastructure that simplifies creation, organization, and management of SSH keys with a consistent naming convention and directory structure.
 
-## Overview
+*Previously known as ssh-keyman*
 
-The SSH Key Management Script automates SSH key management with a consistent naming convention and directory structure. It helps you:
+## Features
 
 - Create and organize SSH keys by environment (dev/prod)
 - Generate properly formatted SSH config entries
 - Manage keys with ssh-agent for password-less login
 - Delete keys and their configuration when no longer needed
-- List all keys in your system with their configuration details
+- View all keys in your system with table or list formats
 - Generate keys following cloud provider workflows (key first, then server creation)
 - Support for multiple users on the same server
 - Provider-specific instructions for Digital Ocean, Linode, and GCP
 - Clean known_hosts entries when servers are recreated to prevent "man-in-the-middle" warnings
+
+## Developments in Progress
+
+- **Key rotation automation**: Streamlined process for regularly updating SSH keys for enhanced security
+- **Backup/restore functionality**: Easily back up and restore your SSH keys and configurations
+- **Enhanced web interface**: Planned GUI for managing SSH keys more visually
+- **Multi-server deployment**: Simplified key deployment across multiple servers
 
 ## Installation
 
@@ -25,24 +32,24 @@ Save the script in your SSH directory:
 ```bash
 mkdir -p ~/.ssh
 # Download the script
-curl -o ssh-keyman.sh https://raw.githubusercontent.com/sudharsan-007/keyman/main/ssh-keyman.sh
+curl -o ~/.ssh/ssh-keyvault.sh https://raw.githubusercontent.com/sudharsan-007/keyman/main/ssh-keyvault.sh
 # Download the README
 curl -o README.md https://raw.githubusercontent.com/sudharsan-007/keyman/main/README.md
 # Make the script executable
-chmod +x ssh-keyman.sh
+chmod +x ~/.ssh/ssh-keyvault.sh
 ```
 
 One-liner for convenience: 
 ```bash
-curl -o ssh-keyman.sh https://raw.githubusercontent.com/sudharsan-007/keyman/main/ssh-keyman.sh && curl -o README.md https://raw.githubusercontent.com/sudharsan-007/keyman/main/README.md && chmod +x ssh-keyman.sh
+curl -o ~/.ssh/ssh-keyvault.sh https://raw.githubusercontent.com/sudharsan-007/keyman/main/ssh-keyvault.sh && curl -o README.md https://raw.githubusercontent.com/sudharsan-007/keyman/main/README.md && chmod +x ~/.ssh/ssh-keyvault.sh
 ```
 
 Or create it manually:
 
 ```bash
-nano ~/.ssh/ssh-keyman.sh
+nano ~/.ssh/ssh-keyvault.sh
 # Paste the script content
-chmod +x ~/.ssh/ssh-keyman.sh
+chmod +x ~/.ssh/ssh-keyvault.sh
 ```
 
 ### 2. Set Up the Alias
@@ -51,13 +58,13 @@ Add an alias to your shell configuration file:
 
 For Bash (in `~/.bashrc`):
 ```bash
-echo 'alias sshsetup="~/.ssh/ssh-keyman.sh"' >> ~/.bashrc
+echo 'alias kv="~/.ssh/ssh-keyvault.sh"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
 For Zsh (in `~/.zshrc`):
 ```bash
-echo 'alias sshsetup="~/.ssh/ssh-keyman.sh"' >> ~/.zshrc
+echo 'alias kv="~/.ssh/ssh-keyvault.sh"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
@@ -105,10 +112,10 @@ This workflow ensures your SSH key is available during server creation, which is
 
 ### Basic Usage
 
-Use the `sshsetup` alias to run the script from anywhere in your system:
+Use the `kv` alias to run the script from anywhere in your system:
 
 ```bash
-sshsetup
+kv
 ```
 
 Without parameters, the script will display an interactive menu with options.
@@ -117,40 +124,43 @@ Without parameters, the script will display an interactive menu with options.
 
 Interactive mode:
 ```bash
-sshsetup create
+kv create
 ```
 
 Non-interactive mode with parameters:
 ```bash
-sshsetup create --env dev --provider do --app librechat --user sudu --ip 123.45.67.89
+kv create --env dev --provider do --app librechat --user sudu --ip 123.45.67.89
 ``` 
 
 #### Create keys for multiple users on a server
 ```bash
 # Start with the primary user
-sshsetup create
+kv create
 # Select "yes" when asked about additional users
 ```
 
-### Listing Keys
+### Viewing Keys
 
 Display all managed keys:
 ```bash
-sshsetup list
+kv view                  # Default table view
+kv view --list           # List format
+kv view --verbose        # Detailed information
+kv view --list --verbose # Detailed list view
 ```
 
 ### Deleting a Key
 
 Delete a key and its configuration:
 ```bash
-sshsetup delete
+kv delete
 ```
 
 ### Editing Config
 
 Update configuration for an existing key:
 ```bash
-sshsetup edit
+kv edit
 ```
 
 ### Cleaning Known Hosts Entries
@@ -159,13 +169,13 @@ When you recreate a server with the same IP or hostname, SSH will show a "man-in
 
 ```bash
 # Clean by IP address
-sshsetup clean --ip 123.45.67.89
+kv clean --ip 123.45.67.89
 
 # Clean by hostname
-sshsetup clean --hostname example.com
+kv clean --hostname example.com
 
 # Interactive mode
-sshsetup clean
+kv clean
 ```
 
 The clean command will:
@@ -178,7 +188,7 @@ The clean command will:
 
 Show all available commands and options:
 ```bash
-sshsetup help
+kv help
 ```
 
 ## SSH Agent Integration
@@ -213,7 +223,7 @@ Host do-librechat-sudu-dev
 
 1. Create a new SSH key:
    ```bash
-   sshsetup create
+   kv create
    ```
    
 2. Copy the public key to the server:
@@ -230,14 +240,14 @@ Host do-librechat-sudu-dev
 
 1. Create a new key with the same app and user:
    ```bash
-   sshsetup create
+   kv create
    ```
    
 2. Add the new key to the server
 3. Test the new key works
 4. Delete the old key:
    ```bash
-   sshsetup delete
+   kv delete
    ```
 
 ### Recreating a Server
@@ -246,7 +256,7 @@ When you recreate a server (e.g., rebuilding a droplet, creating a new VM with t
 
 1. Clean the old host key from known_hosts:
    ```bash
-   sshsetup clean --ip YOUR_SERVER_IP
+   kv clean --ip YOUR_SERVER_IP
    ```
    
 2. Connect to the server using your existing SSH config:
@@ -318,7 +328,7 @@ If you see a warning like "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!" whe
 1. This happens when a server has been recreated with the same IP address
 2. Use the clean command to remove the old host key:
    ```bash
-   sshsetup clean --ip YOUR_SERVER_IP
+   kv clean --ip YOUR_SERVER_IP
    ```
 3. Or remove it manually:
    ```bash
@@ -357,8 +367,8 @@ If you see a warning like "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!" whe
 For servers where you need to connect as different users, create separate keys:
 
 ```bash
-sshsetup create --env prod --provider do --app librechat --user admin
-sshsetup create --env prod --provider do --app librechat --user deploy
+kv create --env prod --provider do --app librechat --user admin
+kv create --env prod --provider do --app librechat --user deploy
 ```
 
 ### Different Key Types
@@ -366,8 +376,8 @@ sshsetup create --env prod --provider do --app librechat --user deploy
 For systems with specific requirements:
 
 ```bash
-sshsetup create --key-type rsa  # For older systems
-sshsetup create --key-type ecdsa  # Alternative to ED25519
+kv create --key-type rsa  # For older systems
+kv create --key-type ecdsa  # Alternative to ED25519
 ```
 
 ### Known Hosts Management
@@ -376,13 +386,13 @@ The script provides advanced known_hosts management features:
 
 ```bash
 # Clean entries for both IP and related hostnames
-sshsetup clean --ip 192.168.1.100
+kv clean --ip 192.168.1.100
 
 # Clean entries for a hostname and its IP address
-sshsetup clean --hostname server.example.com
+kv clean --hostname server.example.com
 
 # Interactive mode with guided options
-sshsetup clean
+kv clean
 ```
 
 Features include:
