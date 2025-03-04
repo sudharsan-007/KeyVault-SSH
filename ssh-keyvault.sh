@@ -40,12 +40,20 @@
 #   ./ssh-keyvault.sh create
 #   ./ssh-keyvault.sh create --env dev --provider do --app librechat --user sudu
 #   ./ssh-keyvault.sh delete
+#   ./ssh-keyvault.sh delete --table --verbose
+#   ./ssh-keyvault.sh delete --list
 #   ./ssh-keyvault.sh view
 #   ./ssh-keyvault.sh view --table
 #   ./ssh-keyvault.sh view --list --verbose
 #   ./ssh-keyvault.sh edit
-#   ./ssh-keyvault.sh clean --ip 192.168.1.100
-#   ./ssh-keyvault.sh clean --hostname example.com
+#   ./ssh-keyvault.sh edit --table --verbose
+#   ./ssh-keyvault.sh edit --list
+#   ./ssh-keyvault.sh clean
+#   ./ssh-keyvault.sh clean                         # Interactive selection
+#   ./ssh-keyvault.sh clean --table --verbose       # Table view with extra details
+#   ./ssh-keyvault.sh clean --list                  # List view format
+#   ./ssh-keyvault.sh clean --ip 192.168.1.100      # Clean specific IP directly
+#   ./ssh-keyvault.sh clean --hostname example.com  # Clean specific hostname directly
 
 set -e
 
@@ -113,7 +121,17 @@ show_help() {
   echo "  ./ssh-keyvault.sh create"
   echo "  ./ssh-keyvault.sh create --env dev --provider do --app librechat --user sudu"
   echo "  ./ssh-keyvault.sh delete"
+  echo "  ./ssh-keyvault.sh delete --table --verbose"
+  echo "  ./ssh-keyvault.sh delete --list"
   echo "  ./ssh-keyvault.sh view"
+  echo "  ./ssh-keyvault.sh view --table"
+  echo "  ./ssh-keyvault.sh view --list --verbose"
+  echo "  ./ssh-keyvault.sh edit"
+  echo "  ./ssh-keyvault.sh edit --table --verbose"
+  echo "  ./ssh-keyvault.sh edit --list"
+  echo "  ./ssh-keyvault.sh clean"
+  echo "  ./ssh-keyvault.sh clean --table --verbose"
+  echo "  ./ssh-keyvault.sh clean --list"
   echo "  ./ssh-keyvault.sh clean --ip 192.168.1.100"
   echo "  ./ssh-keyvault.sh clean --hostname example.com"
   echo
@@ -390,7 +408,73 @@ manage_known_hosts() {
   cp "$known_hosts_file" "$backup_file"
   log_message "INFO" "Created backup of known_hosts file at $backup_file"
   
-  # Determine if we're working with IP or hostname
+  # Data structures to store hosts info
+  declare -a all_ips=()
+  declare -a all_hostnames=()
+  
+  # Log additional information when SHOW_LOGS is enabled
+  if [ "$SHOW_LOGS" = true ]; then
+    log_message "INFO" "Contents of known_hosts file (first 5 lines):"
+    head -n 5 "$known_hosts_file" | while read -r line; do
+      log_message "INFO" "  $line"
+    done
+  fi
+  
+  # Create a sample entry if file is empty (for testing purposes)
+  if [ "$SHOW_LOGS" = true ] && [ ! -s "$known_hosts_file" ]; then
+    log_message "INFO" "known_hosts file is empty or does not exist. This might be a new system."
+  fi
+
+  # Extract all IPs from known_hosts file - more compatible approach
+  # This will get any IP mentioned in the known_hosts file
+  ip_list=$(grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' "$known_hosts_file" 2>/dev/null | sort -u)
+  if [ -n "$ip_list" ]; then
+    while IFS= read -r ip; do
+      [ -n "$ip" ] && all_ips+=("$ip")
+    done <<< "$ip_list"
+  fi
+  
+  # Display count for debugging
+  log_message "INFO" "Extracted ${#all_ips[@]} IP addresses from known_hosts"
+  
+  # Extract all hostnames from known_hosts file - more compatible approach
+  # This extracts entries before the first comma or space, excluding IPs or comments
+  hostname_list=$(grep -v '^#' "$known_hosts_file" | cut -d ' ' -f1 | cut -d ',' -f1 | grep -v '^[0-9]' | sort -u)
+  if [ -n "$hostname_list" ]; then
+    while IFS= read -r hostname; do
+      [ -n "$hostname" ] && all_hostnames+=("$hostname")
+    done <<< "$hostname_list"
+  fi
+  
+  # Display count for debugging
+  log_message "INFO" "Extracted ${#all_hostnames[@]} hostnames from known_hosts"
+  
+  # Add some sample data if both lists are empty and --logs is enabled (for testing purposes)
+  if [ "$SHOW_LOGS" = true ] && [ ${#all_ips[@]} -eq 0 ] && [ ${#all_hostnames[@]} -eq 0 ]; then
+    log_message "INFO" "No entries found in known_hosts file. This might be a new system or the file format is different."
+  fi
+  
+  # Debug information
+  log_message "INFO" "Found ${#all_ips[@]} IP addresses and ${#all_hostnames[@]} hostnames in known_hosts file"
+  
+  # If we have --logs enabled, show the first few entries for debugging
+  if [ "$SHOW_LOGS" = true ]; then
+    log_message "INFO" "First few IPs found (if any):"
+    for i in "${!all_ips[@]}"; do
+      [ $i -lt 3 ] && log_message "INFO" "  IP #$((i+1)): ${all_ips[$i]}"
+      [ $i -eq 3 ] && log_message "INFO" "  ... and more"
+      [ $i -eq 3 ] && break
+    done
+    
+    log_message "INFO" "First few hostnames found (if any):"
+    for i in "${!all_hostnames[@]}"; do
+      [ $i -lt 3 ] && log_message "INFO" "  Hostname #$((i+1)): ${all_hostnames[$i]}"
+      [ $i -eq 3 ] && log_message "INFO" "  ... and more"
+      [ $i -eq 3 ] && break
+    done
+  fi
+  
+  # Determine if we're working with IP or hostname from command line
   if [ -n "$IP" ]; then
     target_type="IP"
     target_value="$IP"
@@ -398,60 +482,162 @@ manage_known_hosts() {
     target_type="hostname"
     target_value="$HOSTNAME"
   else
-    # Interactive mode - ask for IP or hostname
-    echo -e "${YELLOW}Select target type:${NC}"
-    select target_option in "IP Address" "Hostname"; do
-      case $target_option in
-        "IP Address")
-          target_type="IP"
+    # Interactive mode - first show a header
+    echo -e "${BLUE}${BOLD}Clean Known Hosts Entries${NC}"
+    echo
+    
+    # Ask for target type if not specified via command line
+    if [ -z "$target_type" ]; then
+      echo -e "${YELLOW}Select target type:${NC}"
+      select target_option in "IP Address" "Hostname"; do
+        case $target_option in
+          "IP Address")
+            target_type="IP"
+            break
+            ;;
+          "Hostname")
+            target_type="hostname"
+            break
+            ;;
+          *)
+            log_message "ERROR" "Invalid selection. Please try again."
+            ;;
+        esac
+      done
+    fi
+    
+    # Now list the entries based on the target type
+    if [ "$target_type" = "IP" ]; then
+      # Get the count of IPs
+      local ip_count=${#all_ips[@]}
+      
+      if [ $ip_count -eq 0 ]; then
+        echo -e "\n${YELLOW}No IP addresses found in known_hosts file.${NC}"
+        echo -e "You can either:"
+        echo -e "1. Enter an IP address manually"
+        echo -e "2. Go back and select 'Hostname' instead\n"
+        read -p "Enter IP address to clean from known_hosts (or press Ctrl+C to cancel): " target_value
+      else
+        # Display IPs using the selected view mode (table or list)
+        echo -e "\n${BOLD}${CYAN}IP Addresses in known_hosts (${ip_count} found):${NC}"
+        
+        if [ "$VIEW_MODE" = "table" ]; then
+          # Table header
+          printf "%-5s | %-20s\n" "#" "IP Address"
+          printf "%-5s-+-%-20s\n" "-----" "--------------------"
           
-          # Extract all IPs from known_hosts file
-          local ips=($(grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' "$known_hosts_file" | sort -u))
+          # Display IPs in table format
+          for i in "${!all_ips[@]}"; do
+            local num=$((i+1))
+            local ip="${all_ips[$i]}"
+            printf "%-5s | %-20s\n" "$num" "$ip"
+          done
           
-          if [ ${#ips[@]} -eq 0 ]; then
-            log_message "INFO" "No IP addresses found in known_hosts file."
+          # Add "Enter manually" option
+          printf "%-5s | %-20s\n" "$((ip_count+1))" "Enter manually"
+          echo
+        else
+          # List format
+          for i in "${!all_ips[@]}"; do
+            local num=$((i+1))
+            local ip="${all_ips[$i]}"
+            echo -e "${BOLD}#$num${NC} $ip"
+          done
+          echo -e "${BOLD}#$((ip_count+1))${NC} Enter manually"
+          echo
+        fi
+        
+        # Prompt for selection
+        read -p "Enter number (1-$((ip_count+1))): " selection
+        
+        # Validate selection
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le $((ip_count+1)) ]; then
+          if [ "$selection" -eq $((ip_count+1)) ]; then
             read -p "Enter IP address to clean from known_hosts: " target_value
           else
-            echo -e "${YELLOW}Select IP address to clean:${NC}"
-            select ip in "${ips[@]}" "Enter manually"; do
-              if [ "$ip" = "Enter manually" ]; then
-                read -p "Enter IP address to clean from known_hosts: " target_value
-              else
-                target_value="$ip"
-              fi
-              break
-            done
+            target_value="${all_ips[$((selection-1))]}"
           fi
-          break
-          ;;
-        "Hostname")
-          target_type="hostname"
+        else
+          log_message "ERROR" "Invalid selection: $selection"
+          return 1
+        fi
+      fi
+    else
+      # Get the count of hostnames
+      local hostname_count=${#all_hostnames[@]}
+      
+      if [ $hostname_count -eq 0 ]; then
+        echo -e "\n${YELLOW}No hostnames found in known_hosts file.${NC}"
+        echo -e "You can either:"
+        echo -e "1. Enter a hostname manually"
+        echo -e "2. Go back and select 'IP Address' instead\n"
+        read -p "Enter hostname to clean from known_hosts (or press Ctrl+C to cancel): " target_value
+      else
+        # Display hostnames using the selected view mode (table or list)
+        echo -e "\n${BOLD}${CYAN}Hostnames in known_hosts (${hostname_count} found):${NC}"
+        
+        if [ "$VIEW_MODE" = "table" ]; then
+          # Table header
+          if [ "$VERBOSE" = true ]; then
+            printf "%-5s | %-30s | %-15s\n" "#" "Hostname" "Key Type"
+            printf "%-5s-+-%-30s-+-%-15s\n" "-----" "------------------------------" "---------------"
+          else
+            printf "%-5s | %-30s\n" "#" "Hostname"
+            printf "%-5s-+-%-30s\n" "-----" "------------------------------"
+          fi
           
-          # Extract all hostnames from known_hosts file
-          # This extracts entries before the first comma or space
-          local hostnames=($(cut -d ' ' -f1 "$known_hosts_file" | cut -d ',' -f1 | grep -v '^[0-9]' | sort -u))
+          # Display hostnames in table format
+          for i in "${!all_hostnames[@]}"; do
+            local num=$((i+1))
+            local hostname="${all_hostnames[$i]}"
+            local key_type=$(grep "^$hostname " "$known_hosts_file" | awk '{print $2}' | head -1)
+            
+            if [ "$VERBOSE" = true ]; then
+              printf "%-5s | %-30s | %-15s\n" "$num" "$hostname" "${key_type:-unknown}"
+            else
+              printf "%-5s | %-30s\n" "$num" "$hostname"
+            fi
+          done
           
-          if [ ${#hostnames[@]} -eq 0 ]; then
-            log_message "INFO" "No hostnames found in known_hosts file."
+          # Add "Enter manually" option
+          if [ "$VERBOSE" = true ]; then
+            printf "%-5s | %-30s | %-15s\n" "$((hostname_count+1))" "Enter manually" ""
+          else
+            printf "%-5s | %-30s\n" "$((hostname_count+1))" "Enter manually"
+          fi
+          echo
+        else
+          # List format
+          for i in "${!all_hostnames[@]}"; do
+            local num=$((i+1))
+            local hostname="${all_hostnames[$i]}"
+            echo -e "${BOLD}#$num${NC} $hostname"
+            
+            if [ "$VERBOSE" = true ]; then
+              local key_type=$(grep "^$hostname " "$known_hosts_file" | awk '{print $2}' | head -1)
+              echo -e "  Key Type: ${key_type:-unknown}"
+            fi
+          done
+          echo -e "${BOLD}#$((hostname_count+1))${NC} Enter manually"
+          echo
+        fi
+        
+        # Prompt for selection
+        read -p "Enter number (1-$((hostname_count+1))): " selection
+        
+        # Validate selection
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le $((hostname_count+1)) ]; then
+          if [ "$selection" -eq $((hostname_count+1)) ]; then
             read -p "Enter hostname to clean from known_hosts: " target_value
           else
-            echo -e "${YELLOW}Select hostname to clean:${NC}"
-            select hostname in "${hostnames[@]}" "Enter manually"; do
-              if [ "$hostname" = "Enter manually" ]; then
-                read -p "Enter hostname to clean from known_hosts: " target_value
-              else
-                target_value="$hostname"
-              fi
-              break
-            done
+            target_value="${all_hostnames[$((selection-1))]}"
           fi
-          break
-          ;;
-        *)
-          log_message "ERROR" "Invalid selection. Please try again."
-          ;;
-      esac
-    done
+        else
+          log_message "ERROR" "Invalid selection: $selection"
+          return 1
+        fi
+      fi
+    fi
   fi
   
   # Validate target value
@@ -581,6 +767,8 @@ list_ssh_keys() {
   declare -a key_host_entries
   declare -a key_ip_addresses
   declare -a key_in_known_hosts
+  declare -a key_fingerprints
+  declare -a key_in_agent
   
   # Total key count
   local key_count=0
@@ -595,10 +783,43 @@ list_ssh_keys() {
     fi
   }
   
+  # Helper function to get key fingerprint
+  get_key_fingerprint() {
+    local key_path="$1"
+    if [ -f "$key_path" ]; then
+      ssh-keygen -lf "$key_path" 2>/dev/null | awk '{print $2}'
+    else
+      echo "Unavailable"
+    fi
+  }
+  
+  # Helper function to check if key is in SSH agent
+  is_key_in_agent() {
+    local key_path="$1"
+    if [ -f "$key_path" ]; then
+      if ssh-add -l 2>/dev/null | grep -q "$key_path"; then
+        echo "Yes"
+      else
+        echo "No"
+      fi
+    else
+      echo "N/A"
+    fi
+  }
+  
   # Helper function to check if host in known_hosts
   in_known_hosts() {
     local host="$1"
-    if [ -n "$host" ] && grep -q "$host" "$HOME/.ssh/known_hosts" 2>/dev/null; then
+    local ip=""
+    
+    # If we have a hostname, try to find its IP from SSH config
+    if [ -n "$host" ] && [ -f "$HOME/.ssh/config" ]; then
+      ip=$(grep -A2 "^Host $host$" "$HOME/.ssh/config" | grep "HostName" | awk '{print $2}')
+    fi
+    
+    # Check if either hostname or IP is in known_hosts
+    if ([ -n "$host" ] && grep -q "$host" "$HOME/.ssh/known_hosts" 2>/dev/null) || \
+       ([ -n "$ip" ] && grep -q "$ip" "$HOME/.ssh/known_hosts" 2>/dev/null); then
       echo "Yes"
     else
       echo "No"
@@ -658,6 +879,8 @@ list_ssh_keys() {
         local host_entry=$(get_host_entry "$key_path")
         local ip_address=$(get_ip_address "$host_entry")
         local known=$(in_known_hosts "$host_entry")
+        local fingerprint=$(get_key_fingerprint "$key_path.pub")
+        local in_agent=$(is_key_in_agent "$key_path")
         
         # Store details in arrays
         all_keys[$key_count]="$key_path"
@@ -667,6 +890,8 @@ list_ssh_keys() {
         key_host_entries[$key_count]="$host_entry"
         key_ip_addresses[$key_count]="$ip_address"
         key_in_known_hosts[$key_count]="$known"
+        key_fingerprints[$key_count]="$fingerprint"
+        key_in_agent[$key_count]="$in_agent"
         
         key_count=$((key_count + 1))
         log_message "INFO" "Found key: $name in $env environment"
@@ -714,11 +939,11 @@ list_ssh_keys() {
     # Display table header if in table mode
     if [ "$VIEW_MODE" = "table" ]; then
       if [ "$VERBOSE" = true ]; then
-        printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s\n" "#" "Key Name" "Type" "In Known Hosts" "Host Entry" "IP Address"
-        printf "%-5s-+-%-30s-+-%-15s-+-%-12s-+-%-15s-+-%-15s\n" "-----" "------------------------------" "---------------" "------------" "---------------" "---------------"
+        printf "%-5s | %-20s | %-30s | %-15s | %-12s | %-15s\n" "#" "Host Entry" "Key Name" "Type" "In Known Hosts" "IP Address"
+        printf "%-5s-+-%-20s-+-%-30s-+-%-15s-+-%-12s-+-%-15s\n" "-----" "--------------------" "------------------------------" "---------------" "------------" "---------------"
       else
-        printf "%-5s | %-30s | %-15s | %-12s\n" "#" "Key Name" "Type" "In Known Hosts"
-        printf "%-5s-+-%-30s-+-%-15s-+-%-12s\n" "-----" "------------------------------" "---------------" "------------"
+        printf "%-5s | %-20s | %-15s | %-12s\n" "#" "Host Entry" "Type" "In Known Hosts"
+        printf "%-5s-+-%-20s-+-%-15s-+-%-12s\n" "-----" "--------------------" "---------------" "-------------"
       fi
     fi
     
@@ -731,9 +956,9 @@ list_ssh_keys() {
         # Display in appropriate format
         if [ "$VIEW_MODE" = "table" ]; then
           if [ "$VERBOSE" = true ]; then
-            printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s\n" "$global_num" "${key_names[$i]}" "${key_types[$i]}" "${key_in_known_hosts[$i]}" "${key_host_entries[$i]:-Not configured}" "${key_ip_addresses[$i]}"
+            printf "%-5s | %-20s | %-30s | %-15s | %-12s | %-15s\n" "$global_num" "${key_host_entries[$i]:-Not configured}" "${key_names[$i]}" "${key_types[$i]}" "${key_in_known_hosts[$i]}" "${key_ip_addresses[$i]}"
           else
-            printf "%-5s | %-30s | %-15s | %-12s\n" "$global_num" "${key_names[$i]}" "${key_types[$i]}" "${key_in_known_hosts[$i]}"
+            printf "%-5s | %-20s | %-15s | %-12s\n" "$global_num" "${key_host_entries[$i]:-Not configured}" "${key_types[$i]}" "${key_in_known_hosts[$i]}"
           fi
         else
           # List view
@@ -742,6 +967,8 @@ list_ssh_keys() {
             echo -e "  Private Key: ${all_keys[$i]}"
             echo -e "  Public Key: ${all_keys[$i]}.pub"
             echo -e "  Key Type: ${key_types[$i]}"
+            echo -e "  Key Fingerprint: ${key_fingerprints[$i]}"
+            echo -e "  In SSH Agent: ${key_in_agent[$i]}"
             if [ -n "${key_host_entries[$i]}" ]; then
               echo -e "  Host Entry: ${key_host_entries[$i]}"
               echo -e "  IP Address: ${key_ip_addresses[$i]}"
@@ -775,60 +1002,100 @@ list_ssh_keys() {
 delete_ssh_key() {
   log_message "INFO" "Deleting SSH key..."
   
-  # Get list of all keys
-  local keys=()
-  local keys_paths=()
+  # Data structures to store key info - used for selection after viewing
+  declare -a all_keys
+  declare -a key_envs
+  declare -a key_names
   
-  # Add dev keys
-  if [ -d "$HOME/.ssh/keys/dev" ]; then
-    for key in "$HOME/.ssh/keys/dev"/*; do
-      if [ -f "$key" ] && [[ ! "$key" == *.pub ]]; then
-        local basename=$(basename "$key")
-        keys+=("dev:$basename")
-        keys_paths+=("$key")
+  # First collect all keys from both environments
+  for env in "dev" "prod"; do
+    # Check if directory exists
+    if [ ! -d "$HOME/.ssh/keys/$env" ]; then
+      continue
+    fi
+    
+    # Get all private keys (non-.pub files)
+    for key_path in "$HOME/.ssh/keys/$env"/*; do
+      if [[ -f "$key_path" && ! "$key_path" == *.pub ]]; then
+        local name=$(basename "$key_path")
+        all_keys+=("$key_path")
+        key_envs+=("$env")
+        key_names+=("$name")
       fi
     done
-  fi
-  
-  # Add prod keys
-  if [ -d "$HOME/.ssh/keys/prod" ]; then
-    for key in "$HOME/.ssh/keys/prod"/*; do
-      if [ -f "$key" ] && [[ ! "$key" == *.pub ]]; then
-        local basename=$(basename "$key")
-        keys+=("prod:$basename")
-        keys_paths+=("$key")
-      fi
-    done
-  fi
+  done
   
   # Check if any keys exist
-  if [ ${#keys[@]} -eq 0 ]; then
+  local key_count=${#all_keys[@]}
+  if [ $key_count -eq 0 ]; then
     log_message "ERROR" "No SSH keys found to delete."
     return 1
   fi
+
+  # First show all keys with the nice view
+  echo -e "${BLUE}${BOLD}Available SSH Keys:${NC}"
+  list_ssh_keys
   
-  # Display keys for selection
-  echo -e "${YELLOW}Select SSH key to delete:${NC}"
-  for i in "${!keys[@]}"; do
-    local idx=$((i+1))
-    local parts=(${keys[$i]//:/ })
-    echo -e "$idx) ${parts[0]} - ${parts[1]}"
-  done
-  
-  read -p "Enter selection (1-${#keys[@]}): " selection
+  # Now prompt for selection
+  echo
+  echo -e "${YELLOW}${BOLD}Select SSH key to delete:${NC}"
+  read -p "Enter number (1-$key_count): " selection
   
   # Validate selection
-  if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#keys[@]} ]; then
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt $key_count ]; then
     log_message "ERROR" "Invalid selection."
     return 1
   fi
   
-  # Get selected key
-  local key_info=${keys[$((selection-1))]}
-  local key_path=${keys_paths[$((selection-1))]}
-  local parts=(${key_info//:/ })
-  local env=${parts[0]}
-  local basename=${parts[1]}
+  # Convert the selection to an array index (0-based)
+  # Since list_ssh_keys() uses the same ordering, the selection corresponds directly
+  local index=$((selection-1))
+  
+  # Get key details - we need to determine which key was selected
+  local env_count_dev=0
+  local env_count_prod=0
+  local key_index=0
+  
+  # Count keys in each environment to determine the actual index
+  for i in "${!key_envs[@]}"; do
+    if [ "${key_envs[$i]}" = "dev" ]; then
+      env_count_dev=$((env_count_dev + 1))
+    else
+      env_count_prod=$((env_count_prod + 1))
+    fi
+  done
+  
+  # Determine the actual key index
+  if [ $selection -le $env_count_dev ]; then
+    # It's a dev key
+    local dev_count=0
+    for i in "${!key_envs[@]}"; do
+      if [ "${key_envs[$i]}" = "dev" ]; then
+        dev_count=$((dev_count + 1))
+        if [ $dev_count -eq $selection ]; then
+          key_index=$i
+          break
+        fi
+      fi
+    done
+  else
+    # It's a prod key
+    local prod_count=0
+    local adjusted_selection=$((selection - env_count_dev))
+    for i in "${!key_envs[@]}"; do
+      if [ "${key_envs[$i]}" = "prod" ]; then
+        prod_count=$((prod_count + 1))
+        if [ $prod_count -eq $adjusted_selection ]; then
+          key_index=$i
+          break
+        fi
+      fi
+    done
+  fi
+  
+  local key_path="${all_keys[$key_index]}"
+  local env="${key_envs[$key_index]}"
+  local basename="${key_names[$key_index]}"
   
   # Confirm deletion
   echo -e "${RED}Warning: This will delete the SSH key and remove its entry from SSH config.${NC}"
@@ -843,7 +1110,7 @@ delete_ssh_key() {
   ssh-add -d "$key_path" 2>/dev/null || true
   
   # Remove from SSH config
-  local host_entry=$(grep -l "IdentityFile.*$key_path" "$HOME/.ssh/config" | xargs grep "^Host" 2>/dev/null | awk '{print $2}')
+  local host_entry=$(grep -l "IdentityFile.*$key_path" "$HOME/.ssh/config" 2>/dev/null | xargs -r grep "^Host " 2>/dev/null | awk '{print $2}')
   if [ -n "$host_entry" ]; then
     sed -i.bak "/^Host $host_entry$/,/^$/d" "$HOME/.ssh/config"
     log_message "INFO" "Removed host entry $host_entry from SSH config."
@@ -861,60 +1128,100 @@ delete_ssh_key() {
 edit_ssh_config() {
   log_message "INFO" "Editing SSH config..."
   
-  # Get list of all keys
-  local keys=()
-  local keys_paths=()
+  # Data structures to store key info - used for selection after viewing
+  declare -a all_keys
+  declare -a key_envs
+  declare -a key_names
   
-  # Add dev keys
-  if [ -d "$HOME/.ssh/keys/dev" ]; then
-    for key in "$HOME/.ssh/keys/dev"/*; do
-      if [ -f "$key" ] && [[ ! "$key" == *.pub ]]; then
-        local basename=$(basename "$key")
-        keys+=("dev:$basename")
-        keys_paths+=("$key")
+  # First collect all keys from both environments
+  for env in "dev" "prod"; do
+    # Check if directory exists
+    if [ ! -d "$HOME/.ssh/keys/$env" ]; then
+      continue
+    fi
+    
+    # Get all private keys (non-.pub files)
+    for key_path in "$HOME/.ssh/keys/$env"/*; do
+      if [[ -f "$key_path" && ! "$key_path" == *.pub ]]; then
+        local name=$(basename "$key_path")
+        all_keys+=("$key_path")
+        key_envs+=("$env")
+        key_names+=("$name")
       fi
     done
-  fi
-  
-  # Add prod keys
-  if [ -d "$HOME/.ssh/keys/prod" ]; then
-    for key in "$HOME/.ssh/keys/prod"/*; do
-      if [ -f "$key" ] && [[ ! "$key" == *.pub ]]; then
-        local basename=$(basename "$key")
-        keys+=("prod:$basename")
-        keys_paths+=("$key")
-      fi
-    done
-  fi
+  done
   
   # Check if any keys exist
-  if [ ${#keys[@]} -eq 0 ]; then
+  local key_count=${#all_keys[@]}
+  if [ $key_count -eq 0 ]; then
     log_message "ERROR" "No SSH keys found to edit."
     return 1
   fi
+
+  # First show all keys with the nice view
+  echo -e "${BLUE}${BOLD}Available SSH Keys:${NC}"
+  list_ssh_keys
   
-  # Display keys for selection
-  echo -e "${YELLOW}Select SSH key to edit config for:${NC}"
-  for i in "${!keys[@]}"; do
-    local idx=$((i+1))
-    local parts=(${keys[$i]//:/ })
-    echo -e "$idx) ${parts[0]} - ${parts[1]}"
-  done
-  
-  read -p "Enter selection (1-${#keys[@]}): " selection
+  # Now prompt for selection
+  echo
+  echo -e "${YELLOW}${BOLD}Select SSH key to edit config for:${NC}"
+  read -p "Enter number (1-$key_count): " selection
   
   # Validate selection
-  if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#keys[@]} ]; then
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt $key_count ]; then
     log_message "ERROR" "Invalid selection."
     return 1
   fi
   
-  # Get selected key
-  local key_info=${keys[$((selection-1))]}
-  local key_path=${keys_paths[$((selection-1))]}
-  local parts=(${key_info//:/ })
-  local env=${parts[0]}
-  local basename=${parts[1]}
+  # Convert the selection to an array index (0-based)
+  # Since list_ssh_keys() uses the same ordering, the selection corresponds directly
+  local index=$((selection-1))
+  
+  # Get key details - we need to determine which key was selected
+  local env_count_dev=0
+  local env_count_prod=0
+  local key_index=0
+  
+  # Count keys in each environment to determine the actual index
+  for i in "${!key_envs[@]}"; do
+    if [ "${key_envs[$i]}" = "dev" ]; then
+      env_count_dev=$((env_count_dev + 1))
+    else
+      env_count_prod=$((env_count_prod + 1))
+    fi
+  done
+  
+  # Determine the actual key index
+  if [ $selection -le $env_count_dev ]; then
+    # It's a dev key
+    local dev_count=0
+    for i in "${!key_envs[@]}"; do
+      if [ "${key_envs[$i]}" = "dev" ]; then
+        dev_count=$((dev_count + 1))
+        if [ $dev_count -eq $selection ]; then
+          key_index=$i
+          break
+        fi
+      fi
+    done
+  else
+    # It's a prod key
+    local prod_count=0
+    local adjusted_selection=$((selection - env_count_dev))
+    for i in "${!key_envs[@]}"; do
+      if [ "${key_envs[$i]}" = "prod" ]; then
+        prod_count=$((prod_count + 1))
+        if [ $prod_count -eq $adjusted_selection ]; then
+          key_index=$i
+          break
+        fi
+      fi
+    done
+  fi
+  
+  local key_path="${all_keys[$key_index]}"
+  local env="${key_envs[$key_index]}"
+  local basename="${key_names[$key_index]}"
   
   # Parse key name to get components
   IFS='-' read -ra COMPONENTS <<< "$basename"
