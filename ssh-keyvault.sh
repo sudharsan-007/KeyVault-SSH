@@ -563,23 +563,34 @@ show_key_instructions() {
   esac
 }
 
-# Function to list all managed SSH keys
+# Function to list all managed SSH keys - completely rewritten
 list_ssh_keys() {
   log_message "INFO" "Listing managed SSH keys..."
-
-  # Function to extract key type from public key file
+  
+  # Data structures to store key info
+  declare -a all_keys
+  declare -a key_names
+  declare -a key_types
+  declare -a key_environments
+  declare -a key_host_entries
+  declare -a key_ip_addresses
+  declare -a key_in_known_hosts
+  
+  # Total key count
+  local key_count=0
+  
+  # Helper function to get key type
   get_key_type() {
     local pub_key="$1"
     if [ -f "$pub_key" ]; then
-      local key_type=$(head -1 "$pub_key" | awk '{print $1}' | cut -d- -f2)
-      echo $key_type
+      head -1 "$pub_key" | awk '{print $1}' | cut -d- -f2
     else
       echo "unknown"
     fi
   }
-
-  # Function to check if a key is in known_hosts
-  is_in_known_hosts() {
+  
+  # Helper function to check if host in known_hosts
+  in_known_hosts() {
     local host="$1"
     if [ -n "$host" ] && grep -q "$host" "$HOME/.ssh/known_hosts" 2>/dev/null; then
       echo "Yes"
@@ -587,212 +598,166 @@ list_ssh_keys() {
       echo "No"
     fi
   }
-
-  # Table view header
-  print_table_header() {
+  
+  # Helper function to get host entry from SSH config
+  get_host_entry() {
+    local key_path="$1"
+    if [ -f "$HOME/.ssh/config" ]; then
+      grep -B3 -A1 "IdentityFile.*$key_path" "$HOME/.ssh/config" | grep "^Host " | head -1 | awk '{print $2}'
+    fi
+  }
+  
+  # Helper function to get IP address for a host entry
+  get_ip_address() {
+    local host_entry="$1"
+    if [ -n "$host_entry" ] && [ -f "$HOME/.ssh/config" ]; then
+      local ip=$(grep -A2 "^Host $host_entry" "$HOME/.ssh/config" | grep "HostName" | awk '{print $2}')
+      echo "${ip:-Not set}"
+    else
+      echo "Not set"
+    fi
+  }
+  
+  # First collect all keys from both environments
+  for env in "dev" "prod"; do
+    log_message "INFO" "Collecting keys from $env environment"
+    
+    # Check if directory exists
+    if [ ! -d "$HOME/.ssh/keys/$env" ]; then
+      log_message "INFO" "Directory $HOME/.ssh/keys/$env does not exist"
+      continue
+    fi
+    
+    # List directory contents (for debugging)
+    log_message "INFO" "Contents of $HOME/.ssh/keys/$env:"
+    ls -la "$HOME/.ssh/keys/$env"
+    
+    # Fix directory permissions
+    chmod 755 "$HOME/.ssh/keys/$env" 2>/dev/null
+    
+    # Get all private keys (non-.pub files)
+    for key_path in "$HOME/.ssh/keys/$env"/*; do
+      if [[ -f "$key_path" && ! "$key_path" == *.pub ]]; then
+        # Fix permissions
+        chmod 600 "$key_path" 2>/dev/null
+        if [[ -f "$key_path.pub" ]]; then
+          chmod 644 "$key_path.pub" 2>/dev/null
+        fi
+        
+        # Get key details
+        local name=$(basename "$key_path")
+        local type=$(get_key_type "$key_path.pub")
+        local host_entry=$(get_host_entry "$key_path")
+        local ip_address=$(get_ip_address "$host_entry")
+        local known=$(in_known_hosts "$host_entry")
+        
+        # Store details in arrays
+        all_keys[$key_count]="$key_path"
+        key_names[$key_count]="$name"
+        key_types[$key_count]="$type"
+        key_environments[$key_count]="$env"
+        key_host_entries[$key_count]="$host_entry"
+        key_ip_addresses[$key_count]="$ip_address"
+        key_in_known_hosts[$key_count]="$known"
+        
+        key_count=$((key_count + 1))
+        log_message "INFO" "Found key: $name in $env environment"
+      fi
+    done
+  done
+  
+  # If no keys found, display message and return
+  if [ $key_count -eq 0 ]; then
+    echo -e "${YELLOW}No SSH keys found.${NC}"
+    log_message "INFO" "No SSH keys found"
+    return 0
+  fi
+  
+  log_message "INFO" "Found $key_count keys total"
+  
+  # Display keys for each environment
+  for env in "dev" "prod"; do
+    local env_display="Development (dev)"
+    if [ "$env" = "prod" ]; then
+      env_display="Production (prod)"
+    fi
+    
+    local env_count=0
+    for i in $(seq 0 $((key_count - 1))); do
+      if [ "${key_environments[$i]}" = "$env" ]; then
+        env_count=$((env_count + 1))
+      fi
+    done
+    
+    # Skip environment if no keys found
+    if [ $env_count -eq 0 ]; then
+      log_message "INFO" "No keys found in $env environment"
+      continue
+    fi
+    
+    # Display environment header
+    if [ "$VIEW_MODE" = "list" ]; then
+      echo -e "${BOLD}${CYAN}$env_display Environment Keys:${NC}"
+      echo "-------------------------------------"
+    else
+      echo -e "${BOLD}${CYAN}$env_display:${NC}"
+    fi
+    
+    # Display table header if in table mode
     if [ "$VIEW_MODE" = "table" ]; then
       if [ "$VERBOSE" = true ]; then
-        printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s | %-20s\n" "#" "Key Name" "Type" "In Known Hosts" "Host Entry" "IP Address" "Location"
-        printf "%-5s-+-%-30s-+-%-15s-+-%-12s-+-%-15s-+-%-15s-+-%-20s\n" "-----" "------------------------------" "---------------" "------------" "---------------" "---------------" "--------------------"
+        printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s\n" "#" "Key Name" "Type" "In Known Hosts" "Host Entry" "IP Address"
+        printf "%-5s-+-%-30s-+-%-15s-+-%-12s-+-%-15s-+-%-15s\n" "-----" "------------------------------" "---------------" "------------" "---------------" "---------------"
       else
         printf "%-5s | %-30s | %-15s | %-12s\n" "#" "Key Name" "Type" "In Known Hosts"
         printf "%-5s-+-%-30s-+-%-15s-+-%-12s\n" "-----" "------------------------------" "---------------" "------------"
       fi
     fi
-  }
-
-  # List keys with specified format
-  list_env_keys() {
-    local env="$1"
-    local env_display="$2"
-    local count=0
-    local num=0
     
-    # If list view, show the environment header
-    if [ "$VIEW_MODE" = "list" ]; then
-      echo -e "${BOLD}${CYAN}$env_display Environment Keys:${NC}"
-      echo "-------------------------------------"
-    fi
-
-    # Always show environment header in table view
-    if [ "$VIEW_MODE" = "table" ]; then
-      echo -e "${BOLD}${CYAN}$env_display:${NC}"
-    fi
-
-    if [ -d "$HOME/.ssh/keys/$env" ]; then
-      # Get all keys for counting - more robust approach
-      local key_files=()
-      
-      # Print directory contents if verbose
-      if [ "$VERBOSE" = true ]; then
-        log_message "INFO" "Looking for keys in $HOME/.ssh/keys/$env"
-        ls -la "$HOME/.ssh/keys/$env" 2>/dev/null || echo "No files found"
-      fi
-      
-      # Use a more robust method to find files
-      if [ -d "$HOME/.ssh/keys/$env" ]; then
-        while IFS= read -r file; do
-          if [ -f "$file" ] && [[ ! "$file" == *.pub ]]; then
-            key_files+=("$file")
-          fi
-        done < <(find "$HOME/.ssh/keys/$env" -type f -not -name "*.pub" 2>/dev/null)
-      fi
-      
-      # If no keys found
-      if [ ${#key_files[@]} -eq 0 ]; then
-        if [ "$VIEW_MODE" = "table" ]; then
-          echo -e "${YELLOW}No keys found.${NC}"
-          echo
-        elif [ "$VIEW_MODE" = "list" ]; then
-          echo -e "${YELLOW}No keys found.${NC}"
-          echo
-        fi
-        return 0
-      fi
-      
-      # Print table header for this environment if table mode
-      if [ "$VIEW_MODE" = "table" ]; then
-        print_table_header
-      fi
-
-      # Process each key
-      for key in "${key_files[@]}"; do
-        num=$((num+1))
-        local basename=$(basename "$key")
+    # Display keys for current environment using global numbering
+    local global_num=${global_num:-0} # Initialize if not set
+    for i in $(seq 0 $((key_count - 1))); do
+      if [ "${key_environments[$i]}" = "$env" ]; then
+        global_num=$((global_num + 1))
         
-        # Fix: Completely rewrite the host entry matching to be more precise
-        # Using awk to ensure we get exact matches for the current key
-        local host_entry=""
-        if [ -f "$HOME/.ssh/config" ]; then
-          # Use a more precise approach with awk to find exact file path matches
-          host_entry=$(awk -v path="$key" '
-            $1 == "IdentityFile" && $2 == path {
-              in_match = 1
-              match_count++
-            }
-            in_match && $1 == "Host" {
-              print $2
-              in_match = 0
-            }
-          ' "$HOME/.ssh/config")
-          
-          # Double-check that we got a valid host entry for this environment
-          if [ -n "$host_entry" ]; then
-            # Verify the host entry matches the expected environment
-            if [[ "$env" == "dev" && "$host_entry" == *"-prod" ]]; then
-              # This is a dev key being matched to a prod host entry - clear it
-              host_entry=""
-            elif [[ "$env" == "prod" && "$host_entry" == *"-dev" ]]; then
-              # This is a prod key being matched to a dev host entry - clear it
-              host_entry=""
-            fi
-          fi
-        fi
-        
-        local key_type=$(get_key_type "$key.pub")
-        local in_known_hosts=$(is_in_known_hosts "$host_entry")
-        local ip_address=""
-        
-        # Get IP address if verbose mode is enabled
-        if [ "$VERBOSE" = true ] && [ -n "$host_entry" ]; then
-          ip_address=$(grep -A1 "^Host $host_entry$" "$HOME/.ssh/config" | grep "HostName" | awk '{print $2}')
-          ip_address=${ip_address:-"Not set"}
-        fi
-        
-        # Ensure this is the right host entry for this environment
-        if [[ -n "$host_entry" ]]; then
-          if [[ "$env" == "dev" && "$host_entry" == *"-prod" ]]; then
-            # Dev key with prod host entry - clear it
-            host_entry=""
-          elif [[ "$env" == "prod" && "$host_entry" == *"-dev" ]]; then
-            # Prod key with dev host entry - clear it
-            host_entry=""
-          fi
-        fi
-        
-        # Display based on view mode
+        # Display in appropriate format
         if [ "$VIEW_MODE" = "table" ]; then
           if [ "$VERBOSE" = true ]; then
-            # Extended table with host entry, IP address and location
-            local host_entry_display="${host_entry:-Not configured}"
-            printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s | %-20s\n" "$num" "$basename" "$key_type" "$in_known_hosts" "$host_entry_display" "$ip_address" "$key"
+            printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s\n" "$global_num" "${key_names[$i]}" "${key_types[$i]}" "${key_in_known_hosts[$i]}" "${key_host_entries[$i]:-Not configured}" "${key_ip_addresses[$i]}"
           else
-            # Standard table
-            printf "%-5s | %-30s | %-15s | %-12s\n" "$num" "$basename" "$key_type" "$in_known_hosts"
+            printf "%-5s | %-30s | %-15s | %-12s\n" "$global_num" "${key_names[$i]}" "${key_types[$i]}" "${key_in_known_hosts[$i]}"
           fi
         else
-          # List view - show only properly formatted entries
-          # Make sure we're not displaying hosts from the wrong environment
-          if [[ "$env" == "dev" && "$host_entry" == *"-prod" ]]; then
-            # Skip this entry in the wrong environment section
-            continue
-          elif [[ "$env" == "prod" && "$host_entry" == *"-dev" ]]; then
-            # Skip this entry in the wrong environment section
-            continue
-          fi
-
-          echo -e "${BOLD}#$num ${basename}${NC}"
+          # List view
+          echo -e "${BOLD}#$global_num ${key_names[$i]}${NC}"
           if [ "$VERBOSE" = true ]; then
-            echo -e "  Private Key: $key"
-            echo -e "  Public Key: $key.pub"
-            echo -e "  Key Type: $key_type"
-            if [ -n "$host_entry" ]; then
-              echo -e "  Host Entry: $host_entry"
-              echo -e "  IP Address: $ip_address"
+            echo -e "  Private Key: ${all_keys[$i]}"
+            echo -e "  Public Key: ${all_keys[$i]}.pub"
+            echo -e "  Key Type: ${key_types[$i]}"
+            if [ -n "${key_host_entries[$i]}" ]; then
+              echo -e "  Host Entry: ${key_host_entries[$i]}"
+              echo -e "  IP Address: ${key_ip_addresses[$i]}"
             else
               echo -e "  Host Entry: ${YELLOW}Not configured${NC}"
             fi
-            echo -e "  In Known Hosts: $in_known_hosts"
+            echo -e "  In Known Hosts: ${key_in_known_hosts[$i]}"
           else
-            # Concise list view
-            if [ -n "$host_entry" ]; then
-              echo -e "  Host Entry: $host_entry"
+            if [ -n "${key_host_entries[$i]}" ]; then
+              echo -e "  Host Entry: ${key_host_entries[$i]}"
             else
               echo -e "  Host Entry: ${YELLOW}Not configured${NC}"
             fi
           fi
           echo
         fi
-        count=$((count+1))
-      done
-    else
-      # Directory doesn't exist
-      if [ "$VIEW_MODE" = "table" ]; then
-        echo -e "${YELLOW}Environment directory not found.${NC}"
-        echo
-      elif [ "$VIEW_MODE" = "list" ]; then
-        echo -e "${YELLOW}Environment directory not found.${NC}"
-        echo
       fi
-    fi
+    done
     
-    # Add a blank line after table for better readability
-    if [ "$VIEW_MODE" = "table" ] && [ $count -gt 0 ]; then
+    # Add spacing after tables
+    if [ "$VIEW_MODE" = "table" ]; then
       echo
     fi
-    
-    return $count
-  }
-  
-  # Track total keys found
-  local total_count=0
-  local dev_count=0
-  local prod_count=0
-  
-  # Always list keys for both environments regardless of view mode
-  list_env_keys "dev" "Development (dev)"
-  dev_count=$?
-  total_count=$((total_count + dev_count))
-  
-  # Ensure we're listing prod keys regardless of what happened with dev keys
-  list_env_keys "prod" "Production (prod)"
-  prod_count=$?
-  total_count=$((total_count + prod_count))
-  
-  # For table view, show summary if no keys found
-  if [ "$VIEW_MODE" = "table" ] && [ $total_count -eq 0 ]; then
-    echo -e "${YELLOW}No SSH keys found.${NC}"
-  fi
+  done
   
   log_message "SUCCESS" "Listing completed."
   return 0
