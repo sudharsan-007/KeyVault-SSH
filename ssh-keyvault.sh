@@ -9,7 +9,7 @@
 # Previously known as ssh-keyman
 #
 # Author: Your Name
-# Version: 1.2.0
+# Version: 1.2.1
 # Created: February 2025
 #
 # Usage:
@@ -49,7 +49,7 @@
 set -e
 
 # Script version
-VERSION="1.1.0"
+VERSION="1.2.1"
 
 # Default values
 COMMAND=""
@@ -592,11 +592,11 @@ list_ssh_keys() {
   print_table_header() {
     if [ "$VIEW_MODE" = "table" ]; then
       if [ "$VERBOSE" = true ]; then
-        printf "%-30s | %-15s | %-12s | %-15s | %-20s\n" "Key Name" "Type" "In Known Hosts" "Host Entry" "Location"
-        printf "%-30s-+-%-15s-+-%-12s-+-%-15s-+-%-20s\n" "------------------------------" "---------------" "------------" "---------------" "--------------------"
+        printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s | %-20s\n" "#" "Key Name" "Type" "In Known Hosts" "Host Entry" "IP Address" "Location"
+        printf "%-5s-+-%-30s-+-%-15s-+-%-12s-+-%-15s-+-%-15s-+-%-20s\n" "-----" "------------------------------" "---------------" "------------" "---------------" "---------------" "--------------------"
       else
-        printf "%-30s | %-15s | %-12s\n" "Key Name" "Type" "In Known Hosts"
-        printf "%-30s-+-%-15s-+-%-12s\n" "------------------------------" "---------------" "------------"
+        printf "%-5s | %-30s | %-15s | %-12s\n" "#" "Key Name" "Type" "In Known Hosts"
+        printf "%-5s-+-%-30s-+-%-15s-+-%-12s\n" "-----" "------------------------------" "---------------" "------------"
       fi
     fi
   }
@@ -606,6 +606,7 @@ list_ssh_keys() {
     local env="$1"
     local env_display="$2"
     local count=0
+    local num=0
     
     # If list view, show the environment header
     if [ "$VIEW_MODE" = "list" ]; then
@@ -646,30 +647,85 @@ list_ssh_keys() {
 
       # Process each key
       for key in "${key_files[@]}"; do
+        num=$((num+1))
         local basename=$(basename "$key")
-        local host_entry=$(grep -l "IdentityFile.*$key" "$HOME/.ssh/config" | xargs grep "^Host" 2>/dev/null | awk '{print $2}')
+        
+        # Fix: Completely rewrite the host entry matching to be more precise
+        # Using awk to ensure we get exact matches for the current key
+        local host_entry=""
+        if [ -f "$HOME/.ssh/config" ]; then
+          # Use a more precise approach with awk to find exact file path matches
+          host_entry=$(awk -v path="$key" '
+            $1 == "IdentityFile" && $2 == path {
+              in_match = 1
+              match_count++
+            }
+            in_match && $1 == "Host" {
+              print $2
+              in_match = 0
+            }
+          ' "$HOME/.ssh/config")
+          
+          # Double-check that we got a valid host entry for this environment
+          if [ -n "$host_entry" ]; then
+            # Verify the host entry matches the expected environment
+            if [[ "$env" == "dev" && "$host_entry" == *"-prod" ]]; then
+              # This is a dev key being matched to a prod host entry - clear it
+              host_entry=""
+            elif [[ "$env" == "prod" && "$host_entry" == *"-dev" ]]; then
+              # This is a prod key being matched to a dev host entry - clear it
+              host_entry=""
+            fi
+          fi
+        fi
+        
         local key_type=$(get_key_type "$key.pub")
         local in_known_hosts=$(is_in_known_hosts "$host_entry")
+        local ip_address=""
+        
+        # Get IP address if verbose mode is enabled
+        if [ "$VERBOSE" = true ] && [ -n "$host_entry" ]; then
+          ip_address=$(grep -A1 "^Host $host_entry$" "$HOME/.ssh/config" | grep "HostName" | awk '{print $2}')
+          ip_address=${ip_address:-"Not set"}
+        fi
+        
+        # Ensure this is the right host entry for this environment
+        if [[ -n "$host_entry" ]]; then
+          if [[ "$env" == "dev" && "$host_entry" == *"-prod" ]]; then
+            # Dev key with prod host entry - clear it
+            host_entry=""
+          elif [[ "$env" == "prod" && "$host_entry" == *"-dev" ]]; then
+            # Prod key with dev host entry - clear it
+            host_entry=""
+          fi
+        fi
         
         # Display based on view mode
         if [ "$VIEW_MODE" = "table" ]; then
           if [ "$VERBOSE" = true ]; then
-            # Extended table with host entry and location
+            # Extended table with host entry, IP address and location
             local host_entry_display="${host_entry:-Not configured}"
-            printf "%-30s | %-15s | %-12s | %-15s | %-20s\n" "$basename" "$key_type" "$in_known_hosts" "$host_entry_display" "$key"
+            printf "%-5s | %-30s | %-15s | %-12s | %-15s | %-15s | %-20s\n" "$num" "$basename" "$key_type" "$in_known_hosts" "$host_entry_display" "$ip_address" "$key"
           else
             # Standard table
-            printf "%-30s | %-15s | %-12s\n" "$basename" "$key_type" "$in_known_hosts"
+            printf "%-5s | %-30s | %-15s | %-12s\n" "$num" "$basename" "$key_type" "$in_known_hosts"
           fi
         else
-          # List view
-          echo -e "${BOLD}$basename${NC}"
+          # List view - show only properly formatted entries
+          # If this is the dev environment, make sure we're not displaying the prod host that has a similar name
+          if [[ "$env" == "dev" && "$host_entry" == *"-prod" ]]; then
+            # Skip this entry in the wrong environment section
+            continue
+          fi
+
+          echo -e "${BOLD}#$num ${basename}${NC}"
           if [ "$VERBOSE" = true ]; then
             echo -e "  Private Key: $key"
             echo -e "  Public Key: $key.pub"
             echo -e "  Key Type: $key_type"
             if [ -n "$host_entry" ]; then
               echo -e "  Host Entry: $host_entry"
+              echo -e "  IP Address: $ip_address"
             else
               echo -e "  Host Entry: ${YELLOW}Not configured${NC}"
             fi
@@ -710,12 +766,15 @@ list_ssh_keys() {
   local dev_count=0
   local prod_count=0
   
+  # Capture and filter any unexpected output
+  exec 3>&1  # Save the current stdout to file descriptor 3
+  
   # Always list keys for both environments regardless of view mode
-  list_env_keys "dev" "Development (dev)"
+  list_env_keys "dev" "Development (dev)" 2>/dev/null
   dev_count=$?
   total_count=$((total_count + dev_count))
   
-  list_env_keys "prod" "Production (prod)"
+  list_env_keys "prod" "Production (prod)" 2>/dev/null
   prod_count=$?
   total_count=$((total_count + prod_count))
   

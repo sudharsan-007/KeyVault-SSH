@@ -1,5 +1,5 @@
-# KeyVault SSH
-
+# KeyVault SSH - v1.2.0
+t
 A robust SSH key management system for cloud infrastructure that simplifies creation, organization, and management of SSH keys with a consistent naming convention and directory structure.
 
 *Previously known as ssh-keyman*
@@ -10,7 +10,8 @@ A robust SSH key management system for cloud infrastructure that simplifies crea
 - Generate properly formatted SSH config entries
 - Manage keys with ssh-agent for password-less login
 - Delete keys and their configuration when no longer needed
-- View all keys in your system with table or list formats
+- View all keys in your system with table or list formats with sequential numbering
+- Display IP addresses for your SSH keys in verbose mode
 - Generate keys following cloud provider workflows (key first, then server creation)
 - Support for multiple users on the same server
 - Provider-specific instructions for Digital Ocean, Linode, and GCP
@@ -143,11 +144,16 @@ kv create
 
 Display all managed keys:
 ```bash
-kv view                  # Default table view
-kv view --list           # List format
-kv view --verbose        # Detailed information
-kv view --list --verbose # Detailed list view
+kv view                  # Default table view with numbering
+kv view --list           # List format with numbering
+kv view --verbose        # Detailed information including IP addresses
+kv view --list --verbose # Detailed list view with IP addresses
 ```
+
+The view command now includes:
+- Sequential numbering for each key (#1, #2, etc.)
+- IP address display when using the --verbose/-v flag
+- Enhanced table format with better organization
 
 ### Deleting a Key
 
