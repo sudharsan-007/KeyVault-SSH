@@ -1,5 +1,4 @@
-# KeyVault SSH - v1.2.0
-t
+# KeyVault SSH - v1.2.1
 A robust SSH key management system for cloud infrastructure that simplifies creation, organization, and management of SSH keys with a consistent naming convention and directory structure.
 
 *Previously known as ssh-keyman*
@@ -16,6 +15,7 @@ A robust SSH key management system for cloud infrastructure that simplifies crea
 - Support for multiple users on the same server
 - Provider-specific instructions for Digital Ocean, Linode, and GCP
 - Clean known_hosts entries when servers are recreated to prevent "man-in-the-middle" warnings
+- Clean terminal output with optional detailed logging via the `--logs` flag
 
 ## Developments in Progress
 
@@ -126,6 +126,7 @@ Without parameters, the script will display an interactive menu with options.
 Interactive mode:
 ```bash
 kv create
+kv create --logs  # Show detailed logs during key creation
 ```
 
 Non-interactive mode with parameters:
@@ -148,6 +149,7 @@ kv view                  # Default table view with numbering
 kv view --list           # List format with numbering
 kv view --verbose        # Detailed information including IP addresses
 kv view --list --verbose # Detailed list view with IP addresses
+kv view --logs           # Show detailed log messages during operation
 ```
 
 The view command now includes:
@@ -160,6 +162,7 @@ The view command now includes:
 Delete a key and its configuration:
 ```bash
 kv delete
+kv delete --logs  # Show detailed logs during deletion
 ```
 
 ### Editing Config
@@ -365,6 +368,47 @@ If you see a warning like "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!" whe
 - Rotate keys periodically for sensitive environments
 - Properly manage known_hosts entries when servers are recreated to avoid bypassing host verification
 - Always verify new host key fingerprints when connecting to recreated servers
+
+## Logging Options
+
+The script provides clean, minimal output by default while still allowing detailed logging when needed:
+
+### Default Mode
+
+By default, the script shows only essential information:
+- Success messages
+- Error messages
+- Warning messages
+- Key results and tables
+
+This provides a clean, uncluttered terminal experience for routine operations.
+
+### Verbose Log Mode
+
+When troubleshooting or when you need more details about what's happening, use the `--logs` flag:
+
+```bash
+kv view --logs
+kv create --logs
+kv clean --logs
+```
+
+With `--logs` enabled, you'll see:
+- Detailed information about each operation
+- Directory contents and file listings
+- Intermediate steps and processing details
+- All INFO-level messages that are hidden by default
+
+This is particularly useful when:
+- Diagnosing issues with SSH key generation
+- Understanding how the script is processing keys and configurations
+- Troubleshooting permission problems or file structure issues
+
+You can combine `--logs` with other flags:
+
+```bash
+kv view --verbose --logs  # Detailed view with all log messages
+```
 
 ## Advanced Features
 

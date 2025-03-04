@@ -34,6 +34,7 @@
 #   --table, -t           Display keys in table format (default)
 #   --list, -l            Display keys in list format
 #   --verbose, -v         Show verbose information
+#   --logs                Show detailed log messages
 #
 # Examples:
 #   ./ssh-keyvault.sh create
@@ -63,6 +64,7 @@ KEY_TYPE="ed25519"
 INTERACTIVE=true
 VIEW_MODE="table"  # Default view mode: table or list
 VERBOSE=false     # Default verbosity level: false (concise) or true (verbose)
+SHOW_LOGS=false   # Default logging level: false (minimal) or true (verbose)
 
 # Colors
 RED='\033[0;31m'
@@ -105,6 +107,7 @@ show_help() {
   echo "  --table, -t           Display keys in table format (default)"
   echo "  --list, -l            Display keys in list format"
   echo "  --verbose, -v         Show verbose information"
+  echo "  --logs                Show detailed log messages"
   echo
   echo -e "${YELLOW}${BOLD}Examples:${NC}"
   echo "  ./ssh-keyvault.sh create"
@@ -130,7 +133,10 @@ log_message() {
     *) color="$NC" ;;
   esac
   
-  echo -e "${color}[$level] $message${NC}"
+  # Only display INFO logs if SHOW_LOGS is true
+  if [[ "$level" != "INFO" ]] || [[ "$SHOW_LOGS" == true ]]; then
+    echo -e "${color}[$level] $message${NC}"
+  fi
 }
 
 # Function to check prerequisites
@@ -628,9 +634,11 @@ list_ssh_keys() {
       continue
     fi
     
-    # List directory contents (for debugging)
-    log_message "INFO" "Contents of $HOME/.ssh/keys/$env:"
-    ls -la "$HOME/.ssh/keys/$env"
+    # Only show directory contents if --logs is enabled
+    if [ "$SHOW_LOGS" = true ]; then
+      log_message "INFO" "Contents of $HOME/.ssh/keys/$env:"
+      ls -la "$HOME/.ssh/keys/$env"
+    fi
     
     # Fix directory permissions
     chmod 755 "$HOME/.ssh/keys/$env" 2>/dev/null
@@ -1059,10 +1067,10 @@ main() {
   echo -e "${BLUE}${BOLD}===========================================================${NC}"
   echo
   
-  # Check prerequisites
+  # Check prerequisites without showing all logs
   check_prerequisites
   
-  # Create directory structure
+  # Create directory structure silently
   create_directory_structure
   
   # Process command
@@ -1176,6 +1184,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --verbose|-v)
       VERBOSE=true
+      shift
+      ;;
+    --logs)
+      SHOW_LOGS=true
       shift
       ;;
     --help)
