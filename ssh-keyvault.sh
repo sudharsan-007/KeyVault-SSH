@@ -620,13 +620,23 @@ list_ssh_keys() {
     fi
 
     if [ -d "$HOME/.ssh/keys/$env" ]; then
-      # Get all keys for counting
+      # Get all keys for counting - more robust approach
       local key_files=()
-      while IFS= read -r -d '' file; do
-        if [[ ! "$file" == *.pub ]]; then
-          key_files+=("$file")
-        fi
-      done < <(find "$HOME/.ssh/keys/$env" -type f -not -name "*.pub" -print0 2>/dev/null)
+      
+      # Print directory contents if verbose
+      if [ "$VERBOSE" = true ]; then
+        log_message "INFO" "Looking for keys in $HOME/.ssh/keys/$env"
+        ls -la "$HOME/.ssh/keys/$env" 2>/dev/null || echo "No files found"
+      fi
+      
+      # Use a more robust method to find files
+      if [ -d "$HOME/.ssh/keys/$env" ]; then
+        while IFS= read -r file; do
+          if [ -f "$file" ] && [[ ! "$file" == *.pub ]]; then
+            key_files+=("$file")
+          fi
+        done < <(find "$HOME/.ssh/keys/$env" -type f -not -name "*.pub" 2>/dev/null)
+      fi
       
       # If no keys found
       if [ ${#key_files[@]} -eq 0 ]; then
@@ -712,8 +722,11 @@ list_ssh_keys() {
           fi
         else
           # List view - show only properly formatted entries
-          # If this is the dev environment, make sure we're not displaying the prod host that has a similar name
+          # Make sure we're not displaying hosts from the wrong environment
           if [[ "$env" == "dev" && "$host_entry" == *"-prod" ]]; then
+            # Skip this entry in the wrong environment section
+            continue
+          elif [[ "$env" == "prod" && "$host_entry" == *"-dev" ]]; then
             # Skip this entry in the wrong environment section
             continue
           fi
@@ -766,15 +779,13 @@ list_ssh_keys() {
   local dev_count=0
   local prod_count=0
   
-  # Capture and filter any unexpected output
-  exec 3>&1  # Save the current stdout to file descriptor 3
-  
   # Always list keys for both environments regardless of view mode
-  list_env_keys "dev" "Development (dev)" 2>/dev/null
+  list_env_keys "dev" "Development (dev)"
   dev_count=$?
   total_count=$((total_count + dev_count))
   
-  list_env_keys "prod" "Production (prod)" 2>/dev/null
+  # Ensure we're listing prod keys regardless of what happened with dev keys
+  list_env_keys "prod" "Production (prod)"
   prod_count=$?
   total_count=$((total_count + prod_count))
   
